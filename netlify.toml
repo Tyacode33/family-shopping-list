@@ -1,0 +1,10 @@
+[build]
+  publish = "."
+
+[context.production.environment]
+  NODE_ENV = "production"
+[build]
+  publish = "/"
+
+[context.production.environment]
+  NODE_ENV = "production"
