@@ -226,3 +226,4 @@ class ShoppingList {
 document.addEventListener('DOMContentLoaded', () => {
     new ShoppingList();
 });
+// Name change feature deployed
