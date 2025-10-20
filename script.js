@@ -8,16 +8,11 @@ const firebaseConfig = {
   appId: "1:307187394411:web:41e7a93687f89bc748ce2e"
 };
 
-console.log("Script loaded! Firebase config:", firebaseConfig);
-
 class ShoppingList {
     constructor() {
-        console.log("ShoppingList constructor called");
         this.items = [];
         this.initializeElements();
         this.bindEvents();
-        
-        console.log("Initializing Firebase...");
         this.initializeFirebase();
     }
 
@@ -30,16 +25,47 @@ class ShoppingList {
         this.itemCount = document.getElementById('itemCount');
         this.completedCount = document.getElementById('completedCount');
         
+        // CREATE THE NAME CHANGE BUTTON
+        this.createNameChangeButton();
+        
         this.userName = localStorage.getItem('shoppingList_userName') || this.promptUserName();
+        this.updateUserDisplay();
+    }
+
+    createNameChangeButton() {
+        const nameButton = document.createElement('button');
+        nameButton.id = 'changeNameBtn';
+        nameButton.innerHTML = '👤 Change Name';
+        nameButton.className = 'change-name-btn';
+        
+        const header = document.querySelector('header');
+        header.appendChild(nameButton);
+        
+        this.changeNameBtn = nameButton;
     }
 
     promptUserName() {
-        const name = prompt("Welcome to Family Shopping List! Please enter your name (e.g., Mom, Dad, Kid):", "Family Member");
+        const name = prompt("Welcome! Enter your name (e.g., Mom, Dad, Kid):", "Family Member");
         if (name && name.trim()) {
             localStorage.setItem('shoppingList_userName', name.trim());
             return name.trim();
         }
         return "Family Member";
+    }
+
+    changeName() {
+        const newName = prompt("Change your display name:", this.userName);
+        if (newName && newName.trim()) {
+            this.userName = newName.trim();
+            localStorage.setItem('shoppingList_userName', this.userName);
+            this.updateUserDisplay();
+            alert(`Name changed to: ${this.userName}`);
+        }
+    }
+
+    updateUserDisplay() {
+        document.querySelector('header p').textContent = `Hello ${this.userName}! Add items and check them off when purchased.`;
+        this.changeNameBtn.innerHTML = `👤 ${this.userName}`;
     }
 
     bindEvents() {
@@ -49,37 +75,28 @@ class ShoppingList {
         });
         this.clearCompleted.addEventListener('click', () => this.clearCompletedItems());
         this.clearAll.addEventListener('click', () => this.clearAllItems());
+        this.changeNameBtn.addEventListener('click', () => this.changeName());
     }
 
     initializeFirebase() {
         try {
-            console.log("Attempting Firebase initialization...");
-            // Firebase v8 syntax
             firebase.initializeApp(firebaseConfig);
             this.db = firebase.firestore();
-            console.log("✅ Firebase initialized successfully!");
-            
             this.setupFirebaseListener();
         } catch (error) {
-            console.log("❌ Firebase init failed:", error);
             this.loadFromLocalStorage();
             this.render();
         }
     }
 
     setupFirebaseListener() {
-        console.log("Setting up Firebase listener...");
         this.db.collection('shoppingList').orderBy('createdAt', 'desc')
             .onSnapshot((snapshot) => {
-                console.log("🔥 Firebase update received! Items:", snapshot.size);
                 this.items = [];
                 snapshot.forEach(doc => {
-                    console.log("Document data:", doc.data());
                     this.items.push(doc.data());
                 });
                 this.render();
-            }, (error) => {
-                console.error("❌ Firebase listener error:", error);
             });
     }
 
@@ -98,9 +115,7 @@ class ShoppingList {
 
         try {
             await this.db.collection('shoppingList').doc(newItem.id.toString()).set(newItem);
-            console.log("Item saved to Firebase!");
         } catch (error) {
-            console.error("Failed to save to Firebase:", error);
             this.items.push(newItem);
             this.saveToLocalStorage();
         }
@@ -118,7 +133,6 @@ class ShoppingList {
                     completed: item.completed
                 });
             } catch (error) {
-                console.error("Failed to update Firebase:", error);
                 this.saveToLocalStorage();
             }
             this.render();
@@ -129,7 +143,6 @@ class ShoppingList {
         try {
             await this.db.collection('shoppingList').doc(id.toString()).delete();
         } catch (error) {
-            console.error("Failed to delete from Firebase:", error);
             this.items = this.items.filter(item => item.id !== id);
             this.saveToLocalStorage();
         }
@@ -141,22 +154,17 @@ class ShoppingList {
         for (const item of completedItems) {
             try {
                 await this.db.collection('shoppingList').doc(item.id.toString()).delete();
-            } catch (error) {
-                console.error("Failed to delete from Firebase:", error);
-            }
+            } catch (error) {}
         }
     }
 
     async clearAllItems() {
         if (this.items.length === 0) return;
-        
         if (confirm('Are you sure you want to clear all items?')) {
             for (const item of this.items) {
                 try {
                     await this.db.collection('shoppingList').doc(item.id.toString()).delete();
-                } catch (error) {
-                    console.error("Failed to delete from Firebase:", error);
-                }
+                } catch (error) {}
             }
         }
     }
@@ -202,8 +210,6 @@ class ShoppingList {
         
         this.itemCount.textContent = `${totalItems} item${totalItems !== 1 ? 's' : ''}`;
         this.completedCount.textContent = `${completedItems} completed`;
-        
-        document.querySelector('header p').textContent = `Hello ${this.userName}! Add items and check them off when purchased.`;
     }
 
     saveToLocalStorage() {
@@ -222,8 +228,7 @@ class ShoppingList {
     }
 }
 
-// Initialize the shopping list when the page loads
 document.addEventListener('DOMContentLoaded', () => {
     new ShoppingList();
 });
-// Name change feature deployed
+
