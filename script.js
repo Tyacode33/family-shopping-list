@@ -11,9 +11,15 @@ const firebaseConfig = {
 class ShoppingList {
     constructor() {
         this.items = [];
+        this.currentUser = localStorage.getItem('shoppingList_userName') || this.promptUserName();
+        this.notificationEnabled = localStorage.getItem('shoppingList_notifications') !== 'false';
+        this.processedItemIds = new Set(); // Track items we've already notified about
+        this.isFirstLoad = true;
+        
         this.initializeElements();
         this.bindEvents();
         this.initializeFirebase();
+        this.requestNotificationPermission();
     }
 
     initializeElements() {
@@ -24,28 +30,34 @@ class ShoppingList {
         this.clearAll = document.getElementById('clearAll');
         this.itemCount = document.getElementById('itemCount');
         this.completedCount = document.getElementById('completedCount');
+        this.changeNameBtn = document.getElementById('changeNameBtn');
         
-        // CREATE THE NAME CHANGE BUTTON
-        this.createNameChangeButton();
+        // Create notification toggle button
+        this.createNotificationToggle();
         
-        this.userName = localStorage.getItem('shoppingList_userName') || this.promptUserName();
         this.updateUserDisplay();
     }
 
-    createNameChangeButton() {
-        const nameButton = document.createElement('button');
-        nameButton.id = 'changeNameBtn';
-        nameButton.innerHTML = '👤 Change Name';
-        nameButton.className = 'change-name-btn';
-        
-        const header = document.querySelector('header');
-        header.appendChild(nameButton);
-        
-        this.changeNameBtn = nameButton;
+    createNotificationToggle() {
+        // Only create if it doesn't exist
+        if (!document.getElementById('notificationBtn')) {
+            const notificationBtn = document.createElement('button');
+            notificationBtn.id = 'notificationBtn';
+            notificationBtn.innerHTML = this.notificationEnabled ? '🔔 ON' : '🔕 OFF';
+            notificationBtn.className = 'notification-btn';
+            notificationBtn.title = 'Toggle notifications';
+            
+            const header = document.querySelector('header');
+            header.appendChild(notificationBtn);
+            
+            this.notificationBtn = notificationBtn;
+        } else {
+            this.notificationBtn = document.getElementById('notificationBtn');
+        }
     }
 
     promptUserName() {
-        const name = prompt("Welcome! Enter your name (e.g., Mom, Dad, Kid):", "Family Member");
+        const name = prompt("Welcome to Family Shopping List! Please enter your name (e.g., Mom, Dad, Kid):", "Family Member");
         if (name && name.trim()) {
             localStorage.setItem('shoppingList_userName', name.trim());
             return name.trim();
@@ -54,18 +66,32 @@ class ShoppingList {
     }
 
     changeName() {
-        const newName = prompt("Change your display name:", this.userName);
+        const newName = prompt("Change your display name:", this.currentUser);
         if (newName && newName.trim()) {
-            this.userName = newName.trim();
-            localStorage.setItem('shoppingList_userName', this.userName);
+            this.currentUser = newName.trim();
+            localStorage.setItem('shoppingList_userName', this.currentUser);
             this.updateUserDisplay();
-            alert(`Name changed to: ${this.userName}`);
+            this.showLocalNotification(`Name changed to ${this.currentUser}`);
         }
     }
 
+    toggleNotifications() {
+        this.notificationEnabled = !this.notificationEnabled;
+        localStorage.setItem('shoppingList_notifications', this.notificationEnabled.toString());
+        this.notificationBtn.innerHTML = this.notificationEnabled ? '🔔 ON' : '🔕 OFF';
+        
+        if (this.notificationEnabled) {
+            this.requestNotificationPermission();
+        }
+        
+        this.showLocalNotification(`Notifications ${this.notificationEnabled ? 'enabled' : 'disabled'}`);
+    }
+
     updateUserDisplay() {
-        document.querySelector('header p').textContent = `Hello ${this.userName}! Add items and check them off when purchased.`;
-        this.changeNameBtn.innerHTML = `👤 ${this.userName}`;
+        document.querySelector('header p').textContent = `Hello ${this.currentUser}! Add items and check them off when purchased.`;
+        if (this.changeNameBtn) {
+            this.changeNameBtn.innerHTML = `👤 ${this.currentUser}`;
+        }
     }
 
     bindEvents() {
@@ -75,7 +101,61 @@ class ShoppingList {
         });
         this.clearCompleted.addEventListener('click', () => this.clearCompletedItems());
         this.clearAll.addEventListener('click', () => this.clearAllItems());
-        this.changeNameBtn.addEventListener('click', () => this.changeName());
+        
+        if (this.changeNameBtn) {
+            this.changeNameBtn.addEventListener('click', () => this.changeName());
+        }
+        
+        if (this.notificationBtn) {
+            this.notificationBtn.addEventListener('click', () => this.toggleNotifications());
+        }
+    }
+
+    async requestNotificationPermission() {
+        if (!this.notificationEnabled) return;
+        
+        if ('Notification' in window && Notification.permission === 'default') {
+            try {
+                await Notification.requestPermission();
+            } catch (error) {
+                console.log('Notification permission request failed:', error);
+            }
+        }
+    }
+
+    showLocalNotification(message) {
+        const notification = document.createElement('div');
+        notification.className = 'in-app-notification';
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.style.animation = 'notificationSlideOut 0.3s ease-in';
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.parentNode.removeChild(notification);
+                    }
+                }, 300);
+            }
+        }, 3000);
+    }
+
+    showBrowserNotification(title, message) {
+        if (!this.notificationEnabled) return;
+        
+        if ('Notification' in window && Notification.permission === 'granted') {
+            try {
+                new Notification(title, {
+                    body: message,
+                    icon: '/favicon.ico'
+                });
+            } catch (error) {
+                console.log('Browser notification failed:', error);
+            }
+        }
     }
 
     initializeFirebase() {
@@ -84,6 +164,7 @@ class ShoppingList {
             this.db = firebase.firestore();
             this.setupFirebaseListener();
         } catch (error) {
+            console.log('Firebase init failed, using localStorage:', error);
             this.loadFromLocalStorage();
             this.render();
         }
@@ -92,12 +173,46 @@ class ShoppingList {
     setupFirebaseListener() {
         this.db.collection('shoppingList').orderBy('createdAt', 'desc')
             .onSnapshot((snapshot) => {
+                const previousItems = [...this.items];
                 this.items = [];
+                
+                let newItemsFromOthers = [];
+                
                 snapshot.forEach(doc => {
-                    this.items.push(doc.data());
+                    const item = doc.data();
+                    this.items.push(item);
+                    
+                    // Check if this is a new item from another user that we haven't processed
+                    if (!this.isFirstLoad && 
+                        !this.processedItemIds.has(item.id) && 
+                        item.addedBy !== this.currentUser) {
+                        newItemsFromOthers.push(item);
+                    }
+                    
+                    // Mark this item as processed
+                    this.processedItemIds.add(item.id);
                 });
+                
+                // Show notifications for new items from others
+                newItemsFromOthers.forEach(item => {
+                    this.showNewItemNotification(item);
+                });
+                
+                this.isFirstLoad = false;
                 this.render();
+            }, (error) => {
+                console.error('Firestore listener error:', error);
             });
+    }
+
+    showNewItemNotification(item) {
+        const message = `${item.addedBy} added: ${item.text}`;
+        
+        // Browser notification
+        this.showBrowserNotification('🛒 New Shopping Item', message);
+        
+        // In-app notification
+        this.showLocalNotification(message);
     }
 
     async addItem() {
@@ -108,16 +223,22 @@ class ShoppingList {
             id: Date.now(),
             text: text,
             completed: false,
-            addedBy: this.userName,
+            addedBy: this.currentUser,
             addedAt: new Date().toLocaleString(),
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         };
 
         try {
             await this.db.collection('shoppingList').doc(newItem.id.toString()).set(newItem);
+            this.showLocalNotification(`Added: ${text}`);
+            
+            // Mark our own item as processed so we don't get notified about it
+            this.processedItemIds.add(newItem.id);
         } catch (error) {
+            console.error('Failed to save to Firebase:', error);
             this.items.push(newItem);
             this.saveToLocalStorage();
+            this.render();
         }
 
         this.itemInput.value = '';
@@ -132,7 +253,11 @@ class ShoppingList {
                 await this.db.collection('shoppingList').doc(id.toString()).update({
                     completed: item.completed
                 });
+                if (item.completed) {
+                    this.showLocalNotification(`Completed: ${item.text}`);
+                }
             } catch (error) {
+                console.error('Failed to update Firebase:', error);
                 this.saveToLocalStorage();
             }
             this.render();
@@ -140,9 +265,14 @@ class ShoppingList {
     }
 
     async deleteItem(id) {
+        const item = this.items.find(item => item.id === id);
         try {
             await this.db.collection('shoppingList').doc(id.toString()).delete();
+            if (item) {
+                this.showLocalNotification(`Removed: ${item.text}`);
+            }
         } catch (error) {
+            console.error('Failed to delete from Firebase:', error);
             this.items = this.items.filter(item => item.id !== id);
             this.saveToLocalStorage();
         }
@@ -151,21 +281,31 @@ class ShoppingList {
 
     async clearCompletedItems() {
         const completedItems = this.items.filter(item => item.completed);
+        if (completedItems.length === 0) return;
+        
         for (const item of completedItems) {
             try {
                 await this.db.collection('shoppingList').doc(item.id.toString()).delete();
-            } catch (error) {}
+            } catch (error) {
+                console.error('Failed to delete from Firebase:', error);
+            }
         }
+        
+        this.showLocalNotification(`Cleared ${completedItems.length} completed items`);
     }
 
     async clearAllItems() {
         if (this.items.length === 0) return;
+        
         if (confirm('Are you sure you want to clear all items?')) {
             for (const item of this.items) {
                 try {
                     await this.db.collection('shoppingList').doc(item.id.toString()).delete();
-                } catch (error) {}
+                } catch (error) {
+                    console.error('Failed to delete from Firebase:', error);
+                }
             }
+            this.showLocalNotification('Cleared all items');
         }
     }
 
@@ -176,7 +316,7 @@ class ShoppingList {
             if (a.completed !== b.completed) {
                 return a.completed ? 1 : -1;
             }
-            return new Date(b.createdAt) - new Date(a.createdAt);
+            return b.id - a.id;
         });
 
         sortedItems.forEach(item => {
@@ -228,6 +368,7 @@ class ShoppingList {
     }
 }
 
+// Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
     new ShoppingList();
 });
